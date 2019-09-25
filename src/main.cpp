@@ -7,58 +7,42 @@
 #include <functional>
 #include <cstdlib>
 
-
 namespace bvr
 {
-    class HelloTriangleApplication
+    struct RenderConfig
     {
+        int width = 1280;
+        int height = 720;
+        std::vector <vk::ValidationFlagsEXT> validationLayers = {};
+    };
+    
+
+    class Renderer
+    {
+
     public:
-        void run()
-        {
-            constexpr int WIDTH = 1280;
-            constexpr int HEIGHT = 720;
+        Renderer() = default;
+        Renderer(const RenderConfig& config, GLFWwindow* window) :
+            m_config(config),
+            m_window(window)
+        { };
 
-            initWindow(WIDTH, HEIGHT);
+        void init()
+        {
             initVulkan();
-            mainLoop();
-            cleanup();
-        }
-
-    private:
-        void initWindow(int width, int height)
-        {
-            
-            if (!glfwInit()) {
-                throw std::runtime_error("Could not initialize GLFW");
-            }
-
-            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-            glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-
-            m_window = glfwCreateWindow(width, height, "BVR", nullptr, nullptr);
-
-            if (m_window == nullptr) {
-                throw std::runtime_error("Could not create GLFW window!");
-            }
-        }
-
-        void initVulkan()
-        {
-            createInstance();
-        }
-
-        void mainLoop()
-        {
-            while (!glfwWindowShouldClose(m_window)) {
-                glfwPollEvents();
-            }
         }
 
         void cleanup()
         {
             m_instance.destroy();
-            glfwDestroyWindow(m_window);
-            glfwTerminate();
+        }
+
+        void renderFrame() { };
+
+    private:
+        void initVulkan()
+        {
+            createInstance();
         }
 
         void createInstance()
@@ -113,8 +97,79 @@ namespace bvr
             }
         }
 
-        vk::Instance m_instance{};
+        RenderConfig m_config{};
         GLFWwindow* m_window = nullptr;
+
+        vk::Instance m_instance{};
+    };
+
+    class BVRApp
+    {
+    public:
+        BVRApp(const RenderConfig& config) : m_config(config)
+        { }
+
+        ~BVRApp()
+        {
+            if (m_window != nullptr) {
+                glfwDestroyWindow(m_window);
+            }
+            if (!m_glfwInitialized) {
+                return;
+            }
+
+            glfwTerminate();
+            m_renderer.cleanup();
+        }
+
+        void run()
+        {
+            initWindow(m_config.width, m_config.height);
+            initRenderer();
+            mainLoop();
+
+        }
+
+        BVRApp(const BVRApp& app) = delete;
+        BVRApp& operator=(const BVRApp& app) = delete;
+        BVRApp(BVRApp&& app) = delete;
+        BVRApp& operator=(BVRApp&& app) = delete;
+
+    private:
+
+        void initWindow(int width, int height)
+        {
+            m_glfwInitialized = glfwInit();
+            if (!m_glfwInitialized) {
+                throw std::runtime_error("Could not initialize GLFW");
+            }
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+            glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+
+            m_window = glfwCreateWindow(width, height, "BVR", nullptr, nullptr);
+
+            if (m_window == nullptr) {
+                throw std::runtime_error("Could not create GLFW window!");
+            }
+        }
+
+        void initRenderer()
+        {
+            m_renderer = Renderer{ m_config, m_window };
+        }
+
+        void mainLoop()
+        {
+            while (!glfwWindowShouldClose(m_window)) {
+                glfwPollEvents();
+            }
+        }
+
+        RenderConfig m_config;
+        bool m_glfwInitialized = true;
+        GLFWwindow* m_window = nullptr;
+
+        Renderer m_renderer;
 
     };
 }
@@ -122,7 +177,13 @@ namespace bvr
 
 int main()
 {
-    bvr::HelloTriangleApplication app;
+    bvr::RenderConfig config{
+        1280,
+        720,
+        { },
+    };
+
+    bvr::BVRApp app{config};
 
     try {
         app.run();
