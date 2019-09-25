@@ -13,7 +13,8 @@ flags {
 
 defines {
   "_HAS_ITERATOR_DEBUGGING=0",
-  "_SECURE_SCL=0"
+  "_SECURE_SCL=0",
+  "WIN32_LEAN_AND_MEAN"
 }
 
 files {
@@ -36,5 +37,11 @@ links {
   path.join(EXTERNAL_DIR, "libs", "glfw3"),
   path.join(VK_DIR, "Lib", "vulkan-1")
 }
+
+configuration "Debug"
+  flags { "Symbols" }
+
+configuration "Release"
+  flags { "OptimizeSpeed" }
 
 configuration {}
