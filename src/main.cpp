@@ -9,13 +9,22 @@
 
 namespace bvr
 {
+    inline void debugLog(char* output)
+    {
+#ifndef NDEBUG
+        std::cout << "INFO: " << output << std::endl;
+#endif
+    }
+
     struct RenderConfig
     {
         int width = 1280;
         int height = 720;
-        std::vector <vk::ValidationFlagsEXT> validationLayers = {};
+        std::vector <char*> validationLayers = {
+            "VK_LAYER_KHRONOS_validation"
+        };
     };
-    
+
 
     class Renderer
     {
@@ -30,10 +39,13 @@ namespace bvr
         void init()
         {
             initVulkan();
+            debugLog("Renderer Initialized!");
         }
 
         void cleanup()
         {
+            debugLog("Cleaning up Renderer!");
+            destroyDebugMessenger();
             m_instance.destroy();
         }
 
@@ -43,6 +55,7 @@ namespace bvr
         void initVulkan()
         {
             createInstance();
+            setupDebugMessenger();
         }
 
         void createInstance()
@@ -56,35 +69,64 @@ namespace bvr
             };
 
 
-            uint32_t glfwExtensionCount = 0;
-            const char** glfwExtensions;
-            glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-            validateExtensions(glfwExtensions, glfwExtensionCount);
+            std::vector<const char*> requiredExtensions{ getRequiredExtensions() };
+            validateExtensions(requiredExtensions);
 
 
+            if (!checkValidationLayerSupport()) {
+                throw std::runtime_error("Validation requested, but layers not available.");
+            };
 
             vk::InstanceCreateInfo createInfo{
                 vk::InstanceCreateFlags(),
                 &appInfo,
-                0,
-                0,
-                glfwExtensionCount,
-                glfwExtensions,
+                static_cast<uint32_t>(m_config.validationLayers.size()),
+                m_config.validationLayers.data(),
+                static_cast<uint32_t>(requiredExtensions.size()),
+                requiredExtensions.data(),
             };
 
+            VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo;
+
+            if (isValidationEnabled()) {
+                debugCreateInfo = getDebugMessengerCreateInfo();
+                createInfo.pNext = &debugCreateInfo;
+            }
+
             m_instance = vk::createInstance(createInfo);
+
         }
 
-        void validateExtensions(const char** requiredExtensions, uint32_t requiredExtensionCount) const
+        bool isValidationEnabled()
+        {
+            return m_config.validationLayers.size();
+        }
+
+        std::vector<const char*> getRequiredExtensions() const
+        {
+            uint32_t glfwExtensionCount = 0;
+            const char** glfwExtensions;
+            glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+            std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+            if (m_config.validationLayers.size() > 0) {
+                extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            }
+
+            return extensions;
+        }
+
+        void validateExtensions(std::vector<const char*> requiredExtensions) const
         {
             std::vector<vk::ExtensionProperties> extensions = vk::enumerateInstanceExtensionProperties();
 
-            for (uint32_t i = 0; i < requiredExtensionCount; ++i) {
+            for (size_t i = 0; i < requiredExtensions.size(); ++i) {
                 const char* requiredExtension = requiredExtensions[i];
                 bool requirementMet = false;
 
                 for (size_t j = 0; j < extensions.size(); j++) {
-                    if (strcmp(extensions[j].extensionName, requiredExtension)) {
+                    if (strcmp(extensions[j].extensionName, requiredExtension) == 0) {
                         requirementMet = true;
                         break;
                     }
@@ -97,10 +139,86 @@ namespace bvr
             }
         }
 
+        bool checkValidationLayerSupport() const
+        {
+            std::vector < vk::LayerProperties> layers = vk::enumerateInstanceLayerProperties();
+
+            for (const char* layerName : m_config.validationLayers) {
+                bool layerFound = false;
+
+                for (const vk::LayerProperties& layerProps : layers) {
+                    if (strcmp(layerProps.layerName, layerName) == 0) {
+                        layerFound = true;
+                        break;
+                    }
+                }
+
+                if (!layerFound) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        VkDebugUtilsMessengerCreateInfoEXT getDebugMessengerCreateInfo()
+        {
+            vk::DebugUtilsMessengerCreateInfoEXT createInfo{
+                {},
+                vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError,
+                vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation,
+                debugCallback,
+                nullptr,
+            };
+
+            return createInfo;
+        }
+
+        void setupDebugMessenger()
+        {
+            if (m_config.validationLayers.size() == 0) {
+                return;
+            }
+
+            VkDebugUtilsMessengerCreateInfoEXT createInfo = getDebugMessengerCreateInfo();
+
+            auto func = (PFN_vkCreateDebugUtilsMessengerEXT)m_instance.getProcAddr("vkCreateDebugUtilsMessengerEXT");
+
+            VkDebugUtilsMessengerEXT dbgMessenger;
+            if (func != nullptr) {
+                func(m_instance, &createInfo, nullptr, &dbgMessenger);
+                m_dbgMessenger = dbgMessenger;
+            }
+            else {
+                throw std::runtime_error("Failed to setup the Debug Messenger");
+            }
+        }
+
+        void destroyDebugMessenger()
+        {
+            auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)m_instance.getProcAddr("vkDestroyDebugUtilsMessengerEXT");
+            if (func != nullptr && VkDebugUtilsMessengerEXT(m_dbgMessenger) != nullptr) {
+                func(m_instance, m_dbgMessenger, nullptr);
+            }
+        }
+
+        static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+            VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+            VkDebugUtilsMessageTypeFlagsEXT messageType,
+            const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+            void* pUserData)
+        {
+
+            std::cerr << "validation layer: " << pCallbackData->pMessage << std::endl;
+
+            return VK_FALSE;
+        }
+
         RenderConfig m_config{};
         GLFWwindow* m_window = nullptr;
 
         vk::Instance m_instance{};
+        vk::DebugUtilsMessengerEXT m_dbgMessenger;
     };
 
     class BVRApp
@@ -111,6 +229,7 @@ namespace bvr
 
         ~BVRApp()
         {
+            debugLog("Shutting Down!");
             if (m_window != nullptr) {
                 glfwDestroyWindow(m_window);
             }
@@ -120,6 +239,7 @@ namespace bvr
 
             glfwTerminate();
             m_renderer.cleanup();
+            debugLog("Shut down complete");
         }
 
         void run()
@@ -156,10 +276,12 @@ namespace bvr
         void initRenderer()
         {
             m_renderer = Renderer{ m_config, m_window };
+            m_renderer.init();
         }
 
         void mainLoop()
         {
+            debugLog("Entering Main Loop!");
             while (!glfwWindowShouldClose(m_window)) {
                 glfwPollEvents();
             }
@@ -180,10 +302,13 @@ int main()
     bvr::RenderConfig config{
         1280,
         720,
-        { },
     };
 
-    bvr::BVRApp app{config};
+#ifdef NDEBUG
+    config.validationLayers = { };
+#endif
+
+    bvr::BVRApp app{ config };
 
     try {
         app.run();
