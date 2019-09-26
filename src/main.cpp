@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <functional>
 #include <cstdlib>
+#include <set>
 
 namespace bvr
 {
@@ -30,10 +31,11 @@ namespace bvr
     struct QueueFamilyIndices
     {
         uint32_t graphicsFamily = UINT32_MAX;
+        uint32_t presentFamily = UINT32_MAX;
 
         bool isComplete()
         {
-            return graphicsFamily != UINT32_MAX;
+            return graphicsFamily != UINT32_MAX && presentFamily != UINT32_MAX;
         }
     };
 
@@ -50,14 +52,18 @@ namespace bvr
 
         ~Renderer()
         {
-            debugLog("Cleaning up Renderer!");
-
-            destroyDebugMessenger();
-            m_instance.destroy();
+            if (m_instance) {
+                debugLog("Cleaning up Renderer!");
+                m_device.destroy();
+                m_instance.destroySurfaceKHR(m_surface);
+                destroyDebugMessenger();
+                m_instance.destroy();
+            }
         }
 
         void init()
         {
+            debugLog("Initializing Renderer!");
             initVulkan();
             debugLog("Renderer Initialized!");
         }
@@ -69,7 +75,9 @@ namespace bvr
         {
             createInstance();
             setupDebugMessenger();
+            createSurface();
             pickPhysicalDevice();
+            createLogicalDevice();
         }
 
         void createInstance()
@@ -214,8 +222,15 @@ namespace bvr
             std::vector<vk::QueueFamilyProperties> queueFamilies = physicalDevice.getQueueFamilyProperties();
             int i = 0;
             for (const auto& queueFamily : queueFamilies) {
-                if (queueFamily.queueCount > 0 && queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) {
-                    indices.graphicsFamily = i;
+                if (queueFamily.queueCount > 0) {
+                    if (queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) {
+                        indices.graphicsFamily = i;
+                    }
+
+                    vk::Bool32 presentSupported = physicalDevice.getSurfaceSupportKHR(i, m_surface);
+                    if (presentSupported) {
+                        indices.presentFamily = i;
+                    }
                 }
 
                 if (indices.isComplete()) {
@@ -225,6 +240,51 @@ namespace bvr
             }
 
             return indices;
+        }
+
+        void createLogicalDevice()
+        {
+            QueueFamilyIndices indices = findQueueFamilies(m_physicalDevice);
+            float queuePriority = 1.0f;
+
+            std::set<uint32_t> uniqueQueueFamilies{
+                indices.graphicsFamily, indices.presentFamily,
+            };
+
+            std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
+            queueCreateInfos.reserve(uniqueQueueFamilies.size());
+
+            for (const uint32_t queueFamily : uniqueQueueFamilies) {
+                queueCreateInfos.emplace_back(
+                    vk::DeviceQueueCreateFlags{},
+                    indices.graphicsFamily,
+                    1,
+                    &queuePriority
+                );
+            }
+
+            vk::PhysicalDeviceFeatures features{};
+            vk::DeviceCreateInfo createInfo{
+                vk::DeviceCreateFlags(),
+                uint32_t(queueCreateInfos.size()),
+                queueCreateInfos.data(),
+                0, nullptr, // Layers, deprecated and ignored
+                0, nullptr, // Extensions
+                &features,
+            };
+
+            m_device = m_physicalDevice.createDevice(createInfo);
+            m_graphicsQueue = m_device.getQueue(indices.graphicsFamily, 0);
+            m_presentQueue = m_device.getQueue(indices.presentFamily, 0);
+        }
+
+        void createSurface()
+        {
+            VkSurfaceKHR surface;
+            if (glfwCreateWindowSurface(m_instance, m_window, nullptr, &surface) != VK_SUCCESS) {
+                throw std::runtime_error("Failed to create the window surface");
+            }
+            m_surface = surface;
         }
 
         VkDebugUtilsMessengerCreateInfoEXT getDebugMessengerCreateInfo() const
@@ -286,6 +346,11 @@ namespace bvr
         vk::Instance m_instance{};
         vk::DebugUtilsMessengerEXT m_dbgMessenger;
         vk::PhysicalDevice m_physicalDevice;
+        vk::SurfaceKHR m_surface;
+
+        vk::Device m_device;
+        vk::Queue m_graphicsQueue;
+        vk::Queue m_presentQueue;
     };
 
     class BVRApp
