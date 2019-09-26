@@ -9,12 +9,13 @@
 
 namespace bvr
 {
-    inline void debugLog(char* output)
+    inline void debugLog(const char* output)
     {
 #ifndef NDEBUG
         std::cout << "INFO: " << output << std::endl;
 #endif
     }
+
 
     struct RenderConfig
     {
@@ -23,6 +24,17 @@ namespace bvr
         std::vector <char*> validationLayers = {
             "VK_LAYER_KHRONOS_validation"
         };
+    };
+
+
+    struct QueueFamilyIndices
+    {
+        uint32_t graphicsFamily = UINT32_MAX;
+
+        bool isComplete()
+        {
+            return graphicsFamily != UINT32_MAX;
+        }
     };
 
 
@@ -36,17 +48,18 @@ namespace bvr
             m_window(window)
         { };
 
+        ~Renderer()
+        {
+            debugLog("Cleaning up Renderer!");
+
+            destroyDebugMessenger();
+            m_instance.destroy();
+        }
+
         void init()
         {
             initVulkan();
             debugLog("Renderer Initialized!");
-        }
-
-        void cleanup()
-        {
-            debugLog("Cleaning up Renderer!");
-            destroyDebugMessenger();
-            m_instance.destroy();
         }
 
         void renderFrame() { };
@@ -56,6 +69,7 @@ namespace bvr
         {
             createInstance();
             setupDebugMessenger();
+            pickPhysicalDevice();
         }
 
         void createInstance()
@@ -161,7 +175,59 @@ namespace bvr
             return true;
         }
 
-        VkDebugUtilsMessengerCreateInfoEXT getDebugMessengerCreateInfo()
+        void pickPhysicalDevice()
+        {
+            std::vector<vk::PhysicalDevice> devices = m_instance.enumeratePhysicalDevices();
+
+            for (const auto& device : devices) {
+                if (isDeviceSuitable(device)) {
+                    m_physicalDevice = device;
+                    break;
+                }
+            }
+
+            if (!m_physicalDevice) {
+                throw std::runtime_error("Failed to find suitable physical device!");
+            }
+
+#ifndef  NDEBUG
+            vk::PhysicalDeviceProperties props = m_physicalDevice.getProperties();
+            std::string message = "Physical Device found! ";
+            debugLog(message.append(props.deviceName).c_str());
+#endif
+        }
+
+        bool isDeviceSuitable(const vk::PhysicalDevice& device) const
+        {
+            QueueFamilyIndices indices = findQueueFamilies(device);
+
+            vk::PhysicalDeviceProperties props = device.getProperties();
+            vk::PhysicalDeviceFeatures features = device.getFeatures();
+
+            return indices.isComplete() && props.deviceType == vk::PhysicalDeviceType::eDiscreteGpu;
+        }
+
+        QueueFamilyIndices findQueueFamilies(const vk::PhysicalDevice& physicalDevice) const
+        {
+            QueueFamilyIndices indices;
+
+            std::vector<vk::QueueFamilyProperties> queueFamilies = physicalDevice.getQueueFamilyProperties();
+            int i = 0;
+            for (const auto& queueFamily : queueFamilies) {
+                if (queueFamily.queueCount > 0 && queueFamily.queueFlags & vk::QueueFlagBits::eGraphics) {
+                    indices.graphicsFamily = i;
+                }
+
+                if (indices.isComplete()) {
+                    return indices;
+                }
+                ++i;
+            }
+
+            return indices;
+        }
+
+        VkDebugUtilsMessengerCreateInfoEXT getDebugMessengerCreateInfo() const
         {
             vk::DebugUtilsMessengerCreateInfoEXT createInfo{
                 {},
@@ -197,7 +263,7 @@ namespace bvr
         void destroyDebugMessenger()
         {
             auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)m_instance.getProcAddr("vkDestroyDebugUtilsMessengerEXT");
-            if (func != nullptr && VkDebugUtilsMessengerEXT(m_dbgMessenger) != nullptr) {
+            if (func != nullptr && m_dbgMessenger) {
                 func(m_instance, m_dbgMessenger, nullptr);
             }
         }
@@ -219,6 +285,7 @@ namespace bvr
 
         vk::Instance m_instance{};
         vk::DebugUtilsMessengerEXT m_dbgMessenger;
+        vk::PhysicalDevice m_physicalDevice;
     };
 
     class BVRApp
@@ -238,8 +305,6 @@ namespace bvr
             }
 
             glfwTerminate();
-            m_renderer.cleanup();
-            debugLog("Shut down complete");
         }
 
         void run()
@@ -317,6 +382,5 @@ int main()
         std::cerr << e.what() << std::endl;
         return EXIT_FAILURE;
     }
-
     return EXIT_SUCCESS;
 }
